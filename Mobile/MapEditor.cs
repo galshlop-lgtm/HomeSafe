@@ -1,5 +1,6 @@
 using System.Globalization;
 using HomeSafe.Shared;
+using Microsoft.Maui.Storage;
 using static HomeSafe.Mobile.Design;
 
 namespace HomeSafe.Mobile;

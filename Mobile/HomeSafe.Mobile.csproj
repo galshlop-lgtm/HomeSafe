@@ -26,13 +26,13 @@
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <MauiIcon Include="Resources/AppIcon/icon.svg" Color="#2258E7" />
     <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#2258E7" BaseSize="160,160" />
-    <MauiAsset Include="Resources/Raw/**" Exclude="Resources/Raw/alarm.wav" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+    <MauiAsset Include="Resources/AppAssets/**" Exclude="Resources/AppAssets/alarm.wav" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     <PackageReference Include="Xamarin.Firebase.Messaging" Version="124.1.2" />
     <GoogleServicesJson Include="google-services.json" Condition="Exists('google-services.json')" />
   </ItemGroup>
   <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
-    <BundleResource Include="Resources/Raw/alarm.wav" LogicalName="alarm.wav" />
+    <BundleResource Include="Resources/AppAssets/alarm.wav" LogicalName="alarm.wav" />
   </ItemGroup>
 </Project>

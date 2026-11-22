@@ -12,6 +12,7 @@ using Android.Provider;
 using Firebase;
 using Firebase.Messaging;
 using HomeSafe.Shared;
+using Microsoft.Maui.Storage;
 using Uri = Android.Net.Uri;
 using AppContext = Android.App.Application;
 
