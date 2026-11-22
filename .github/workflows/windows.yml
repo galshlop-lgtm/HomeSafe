@@ -24,7 +24,7 @@ jobs:
           -o WindowsApp
       - shell: pwsh
         run: |
-          foreach ($file in @("HomeSafe.Mobile.exe", "alarm.wav", "home-map.html", "leaflet/leaflet.js")) {
+          foreach ($file in @("HomeSafe.Mobile.exe", "alarm.wav", "home-map.html")) {
             if (-not (Test-Path (Join-Path "WindowsApp" $file))) { throw "Missing $file" }
           }
       - uses: actions/upload-artifact@v4

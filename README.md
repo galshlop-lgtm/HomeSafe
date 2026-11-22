@@ -10,7 +10,7 @@ Install the debug APK on a 64-bit Android 8.0 or newer device, or run the MAUI p
 - **הגדרות → מעבר לחשבון ילד/ה** shows the same request from Daniel's account.
 - **הגדרות → בדיקת אזעקה** plays the app's alarm locally. Use **סיום הבדיקה** to stop it.
 - **הגדרות → דימוי הגעה לבית** records a simulated arrival. The demo resets when you exit demo mode or restart the app.
-- The home editor uses OpenStreetMap tiles over the internet. The radius and pin can be edited independently of the server.
+- The home editor uses OpenFreeMap with OpenStreetMap data over the internet. The radius and pin can be edited independently of the server.
 
 ## Run directly in a Windows virtual machine
 
@@ -69,4 +69,4 @@ The included APNs entitlements use the development environment. For App Store di
 - On both platforms, locked-screen delivery depends on operating-system policy, settings, and network availability. A known deadline can trigger a local verification prompt when the server is unreachable. Automatic push requires connectivity.
 - Location sharing requires explicit consent. The server keeps at most the latest fix for a request. It clears the fix on verified arrival or successful revocation and expires it after 24 hours. Monitoring can continue for up to two hours after the deadline to record a late arrival. The Android location-service notification or the iOS background location indicator shows when tracking is active. Turning off sharing stops tracking locally and queues server-side revocation if the connection is down.
 
-The source includes a single-instance pilot backend and one push device registration per account. Running it for real families requires configured push credentials, HTTPS hosting, and a two-device check with the phones locked, backgrounded, and offline. For a public release, use a map tile service with capacity and terms appropriate to your deployment. The included map is built with Leaflet, whose license is bundled.
+The source includes a single-instance pilot backend and one push device registration per account. Running it for real families requires configured push credentials, HTTPS hosting, and a two-device check with the phones locked, backgrounded, and offline. For a public release, use a map tile service with capacity and terms appropriate to your deployment. The included map uses MapLibre GL JS.

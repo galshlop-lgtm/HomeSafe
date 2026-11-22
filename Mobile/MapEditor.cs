@@ -36,12 +36,7 @@ internal sealed partial class HomePage
                 lon = b;
                 status.Text = "נקודה נבחרה במפה.";
             }
-            else if (uri.Host == "homesafe.invalid" && uri.AbsolutePath == "/tiles-unavailable")
-            {
-                e.Cancel = true;
-                status.Text = "המפה כרגע אינה זמינה. ניתן לבחור במיקום המכשיר.";
-            }
-            else if (uri.Host == "www.openstreetmap.org")
+            else if (uri.Scheme == "https" && uri.Host is ("www.openstreetmap.org" or "openfreemap.org" or "openmaptiles.org"))
             {
                 e.Cancel = true;
                 _ = Launcher.Default.OpenAsync(uri);
@@ -49,9 +44,7 @@ internal sealed partial class HomePage
             else if (uri.Scheme is "http" or "https" && uri.Host != "homesafe.invalid")
                 e.Cancel = true;
         };
-        string html = template.Replace("/*LEAFLET_CSS*/", await ReadAsset("leaflet/leaflet.css"))
-            .Replace("/*LEAFLET_JS*/", await ReadAsset("leaflet/leaflet.js"))
-            .Replace("/*POSITION*/", FormattableString.Invariant($"{lat},{lon},{radius.Value}"));
+        string html = template.Replace("/*POSITION*/", FormattableString.Invariant($"{lat},{lon},{radius.Value}"));
         map.Source = new HtmlWebViewSource { Html = html, BaseUrl = "https://homesafe.invalid/" };
         radius.ValueChanged += async (_, _) =>
         {
@@ -69,7 +62,8 @@ internal sealed partial class HomePage
                 selected = true;
                 lat = location.Latitude;
                 lon = location.Longitude;
-                await map.EvaluateJavaScriptAsync(FormattableString.Invariant($"selectPoint({lat},{lon},true)"));
+                try { await map.EvaluateJavaScriptAsync(FormattableString.Invariant($"selectPoint({lat},{lon},true)")); }
+                catch { }
                 status.Text = "נקודה נקבעה לפי מיקום המכשיר.";
             }), false),
             Button("שמירת אזור הבית", async () => await Run(async () =>

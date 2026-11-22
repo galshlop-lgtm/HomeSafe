@@ -1,39 +1,69 @@
 <!doctype html>
-<html lang="he" dir="ltr">
+<html lang="he">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css">
 <style>
-/*LEAFLET_CSS*/
 html, body, #map { width:100%; height:100%; margin:0; background:#dce7f3; }
-.home-marker { border:3px solid white; background:#2258e7; border-radius:100%; box-shadow:0 2px 6px #15244988; }
+#failure { position:absolute; inset:0; display:grid; place-content:center; background:#edf3ff; text-align:center; }
+#failure[hidden] { display:none; }
 </style>
 </head>
 <body>
 <div id="map" aria-label="מפת בחירת מיקום הבית"></div>
-<script>/*LEAFLET_JS*/</script>
+<div id="failure" dir="rtl" hidden>המפה אינה זמינה כרגע.<br>אפשר לבחור לפי המיקום הנוכחי.</div>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
 <script>
-const [lat, lon, radius] = [/*POSITION*/];
-const map = L.map('map').setView([lat, lon], 17);
-let failed = false;
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-}).on('tileerror', () => {
-    if (failed) return;
-    failed = true;
-    window.location.href = 'https://homesafe.invalid/tiles-unavailable';
-}).addTo(map);
-const marker = L.marker([lat,lon], { icon:L.divIcon({ className:'home-marker', iconSize:[18,18] }) }).addTo(map);
-const circle = L.circle([lat,lon], { radius, color:'#2258e7', fillColor:'#6792ff', fillOpacity:.23 }).addTo(map);
-function selectPoint(a,b,pan) {
-    marker.setLatLng([a,b]); circle.setLatLng([a,b]); if (pan) map.setView([a,b],17);
+let [lat, lon, radius] = [/*POSITION*/];
+let map, marker;
+function showFailure() {
+    document.getElementById('failure').hidden = false;
 }
-function setRadius(metres) { circle.setRadius(metres); }
-map.on('click', event => {
-    const click = event.latlng.wrap();
-    selectPoint(click.lat, click.lng, false);
-    window.location.href = 'https://homesafe.invalid/point?' + click.lat + '&' + click.lng;
-});
+function boundary() {
+    const radians = Math.PI / 180;
+    const phi = lat * radians, lambda = lon * radians, distance = radius / 6371000;
+    const ring = Array.from({length: 65}, (_, index) => {
+        const angle = (index % 64) * 2 * Math.PI / 64;
+        const y = Math.asin(Math.sin(phi) * Math.cos(distance) + Math.cos(phi) * Math.sin(distance) * Math.cos(angle));
+        const x = lambda + Math.atan2(Math.sin(angle) * Math.sin(distance) * Math.cos(phi),
+            Math.cos(distance) - Math.sin(phi) * Math.sin(y));
+        return [x / radians, y / radians];
+    });
+    return {type:'Feature', properties:{}, geometry:{type:'Polygon', coordinates:[ring]}};
+}
+function selectPoint(a, b, pan) {
+    lat = a; lon = b;
+    marker?.setLngLat([lon, lat]);
+    map?.getSource('home-radius')?.setData(boundary());
+    if (pan) map?.jumpTo({center:[lon, lat], zoom:17});
+}
+function setRadius(metres) {
+    radius = metres;
+    map?.getSource('home-radius')?.setData(boundary());
+}
+try {
+    map = new maplibregl.Map({container:'map', style:'https://tiles.openfreemap.org/styles/liberty',
+        center:[lon, lat], zoom:17, maxZoom:19});
+    const loading = setTimeout(showFailure, 15000);
+    map.addControl(new maplibregl.NavigationControl({showCompass:false}), 'top-left');
+    map.on('load', () => {
+        clearTimeout(loading);
+        document.getElementById('failure').hidden = true;
+        marker = new maplibregl.Marker({color:'#2258e7'}).setLngLat([lon, lat]).addTo(map);
+        map.addSource('home-radius', {type:'geojson', data:boundary()});
+        map.addLayer({id:'home-fill', type:'fill', source:'home-radius',
+            paint:{'fill-color':'#6792ff','fill-opacity':0.23,'fill-outline-color':'#2258e7'}});
+        map.on('click', ({lngLat}) => {
+            const point = lngLat.wrap();
+            selectPoint(point.lat, point.lng, false);
+            window.location.href = 'https://homesafe.invalid/point?' + point.lat + '&' + point.lng;
+        });
+    });
+    map.getCanvas().addEventListener('webglcontextlost', showFailure);
+} catch {
+    showFailure();
+}
 </script>
 </body>
 </html>
