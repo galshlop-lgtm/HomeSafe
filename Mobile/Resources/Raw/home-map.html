@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="he" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<style>
+/*LEAFLET_CSS*/
+html, body, #map { width:100%; height:100%; margin:0; background:#dce7f3; }
+.home-marker { border:3px solid white; background:#2258e7; border-radius:100%; box-shadow:0 2px 6px #15244988; }
+</style>
+</head>
+<body>
+<div id="map" aria-label="מפת בחירת מיקום הבית"></div>
+<script>/*LEAFLET_JS*/</script>
+<script>
+const [lat, lon, radius] = [/*POSITION*/];
+const map = L.map('map').setView([lat, lon], 17);
+let failed = false;
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:19, attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).on('tileerror', () => {
+    if (failed) return;
+    failed = true;
+    window.location.href = 'https://homesafe.invalid/tiles-unavailable';
+}).addTo(map);
+const marker = L.marker([lat,lon], { icon:L.divIcon({ className:'home-marker', iconSize:[18,18] }) }).addTo(map);
+const circle = L.circle([lat,lon], { radius, color:'#2258e7', fillColor:'#6792ff', fillOpacity:.23 }).addTo(map);
+function selectPoint(a,b,pan) {
+    marker.setLatLng([a,b]); circle.setLatLng([a,b]); if (pan) map.setView([a,b],17);
+}
+function setRadius(metres) { circle.setRadius(metres); }
+map.on('click', event => {
+    const click = event.latlng.wrap();
+    selectPoint(click.lat, click.lng, false);
+    window.location.href = 'https://homesafe.invalid/point?' + click.lat + '&' + click.lng;
+});
+</script>
+</body>
+</html>

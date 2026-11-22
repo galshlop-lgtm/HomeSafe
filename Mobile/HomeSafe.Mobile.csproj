@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
+    <TargetFrameworks Condition="'$(OS)' != 'Windows_NT' and !$([MSBuild]::IsOSPlatform('osx'))">net10.0-android</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <RuntimeIdentifiers Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">android-arm64;android-x64</RuntimeIdentifiers>
+    <RootNamespace>HomeSafe.Mobile</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationTitle>HomeSafe</ApplicationTitle>
+    <ApplicationId>org.homesafe.mobile</ApplicationId>
+    <ApplicationDisplayVersion>1.0.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">26.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">16.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios' and '$(HomeSafePush)' == 'true'">
+    <CodesignEntitlements>Platforms/iOS/Entitlements.plist</CodesignEntitlements>
+    <CodesignEntitlements Condition="'$(HomeSafeCriticalAlerts)' == 'true'">Platforms/iOS/CriticalEntitlements.plist</CodesignEntitlements>
+    <DefineConstants Condition="'$(HomeSafeCriticalAlerts)' == 'true'">$(DefineConstants);HOMESAFE_CRITICAL_ALERTS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Shared/HomeSafe.Shared.csproj" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <MauiIcon Include="Resources/AppIcon/icon.svg" Color="#2258E7" />
+    <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#2258E7" BaseSize="160,160" />
+    <MauiAsset Include="Resources/Raw/**" Exclude="Resources/Raw/alarm.wav" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <PackageReference Include="Xamarin.Firebase.Messaging" Version="124.1.2" />
+    <GoogleServicesJson Include="google-services.json" Condition="Exists('google-services.json')" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">
+    <BundleResource Include="Resources/Raw/alarm.wav" LogicalName="alarm.wav" />
+  </ItemGroup>
+</Project>

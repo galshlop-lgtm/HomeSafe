@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+**/data/
+**/.vs/
+**/google-services.json
+*.p8
+*.p12
+*.keystore
+*.user

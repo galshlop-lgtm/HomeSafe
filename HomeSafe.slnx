@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/Mobile/">
+    <Project Path="Mobile/HomeSafe.Mobile.csproj" />
+  </Folder>
+  <Folder Name="/Server/">
+    <Project Path="Server/HomeSafe.Server.csproj" />
+  </Folder>
+  <Folder Name="/Shared/">
+    <Project Path="Shared/HomeSafe.Shared.csproj" />
+  </Folder>
+</Solution>

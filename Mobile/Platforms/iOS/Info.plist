@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>LSRequiresIPhoneOS</key><true/>
+  <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+  <key>CFBundleDevelopmentRegion</key><string>he</string>
+  <key>CFBundleLocalizations</key><array><string>he</string></array>
+  <key>UILaunchStoryboardName</key><string>MauiSplash</string>
+  <key>UISupportedInterfaceOrientations</key>
+  <array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
+  <key>NSLocationWhenInUseUsageDescription</key><string>משתמשים במיקום כדי לבחור את אזור הבית או לאמת שהגעת בזמן בקשת חזרה.</string>
+  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>באישורך, HomeSafe יבדוק הגעה הביתה גם כשהמסך כבוי בזמן בקשת חזרה פעילה.</string>
+  <key>UIBackgroundModes</key><array><string>location</string><string>remote-notification</string></array>
+</dict>
+</plist>
