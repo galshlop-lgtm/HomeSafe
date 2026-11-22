@@ -1,0 +1,31 @@
+name: HomeSafe Windows
+on:
+  push:
+    branches: [main]
+    paths: ['Mobile/**', 'Shared/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet workload install maui-windows
+      - run: >-
+          dotnet publish Mobile/HomeSafe.Mobile.csproj -c Release
+          -p:HomeSafeWindowsOnly=true -r win-x64 --self-contained
+          -o WindowsApp
+      - shell: pwsh
+        run: |
+          foreach ($file in @("HomeSafe.Mobile.exe", "alarm.wav", "home-map.html", "leaflet/leaflet.js")) {
+            if (-not (Test-Path (Join-Path "WindowsApp" $file))) { throw "Missing $file" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HomeSafe-Windows-x64
+          path: WindowsApp/
+          if-no-files-found: error

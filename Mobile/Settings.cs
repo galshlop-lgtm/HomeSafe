@@ -48,6 +48,9 @@ internal sealed partial class HomePage
         else
         {
             layout.Add(Box(Stack(9, Text("התראות ואזעקות", 19, Ink, true),
+#if WINDOWS
+                Text("התרעות מוצגות בחלון הפעיל של HomeSafe.", 14, Muted),
+#else
                 Text(model.PushConfigured && model.DeviceRegistered ? "המכשיר רשום אצל שירות ההתראות."
                     : "יש להפעיל הרשאות ולוודא ששירות ההתראות מחובר לשרת.", 14, Muted),
                 Button("הפעלת התראות", async () => await Run(async () =>
@@ -57,6 +60,7 @@ internal sealed partial class HomePage
                     Render();
                     await Notice("אפשר לבדוק הרשאות צליל ומסך נעילה בהגדרות המכשיר.");
                 })),
+#endif
                 Button("בדיקת צליל אזעקה", () => Go(() =>
                 {
                     testingAlarm = true;

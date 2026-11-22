@@ -201,6 +201,8 @@ internal sealed partial class HomePage : ContentPage
 #if ANDROID && DEBUG
         if (serverAddress.Length == 0 && DeviceInfo.Current.DeviceType == DeviceType.Virtual)
             serverAddress = "http://10.0.2.2:5080";
+#elif WINDOWS && DEBUG
+        if (serverAddress.Length == 0) serverAddress = "http://127.0.0.1:5080";
 #endif
         var address = Entry("https://homesafe.example", serverAddress, Keyboard.Url);
         address.FlowDirection = FlowDirection.LeftToRight;

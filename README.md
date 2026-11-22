@@ -12,6 +12,12 @@ Install the debug APK on a 64-bit Android 8.0 or newer device, or run the MAUI p
 - **הגדרות → דימוי הגעה לבית** records a simulated arrival. The demo resets when you exit demo mode or restart the app.
 - The home editor uses OpenStreetMap tiles over the internet. The radius and pin can be edited independently of the server.
 
+## Run directly in a Windows virtual machine
+
+Install Visual Studio with the **.NET Multi-platform App UI development** workload inside a Windows 10 (version 2004 or newer) or Windows 11 VM. Open `HomeSafe.slnx`, set `HomeSafe.Mobile` as the startup project, choose **Windows Machine**, and press **F5**. The Windows build is an unpackaged desktop app. Demo mode opens from **ניסיון במצב הדגמה**.
+
+To sign in, run the **HomeSafe Local API** profile inside the Windows VM. The Debug app suggests `http://127.0.0.1:5080`. Keep the window active for live status updates and alarms. Windows location depends on the guest's location services and hardware. Mobile push delivery and background alarm scheduling are available on the mobile targets.
+
 ## Run in the Android emulator from Visual Studio
 
 1. In Visual Studio Installer, install the **.NET Multi-platform App UI development** workload and the Android emulator. Open `HomeSafe.slnx` and set **HomeSafe.Mobile** as the startup project.

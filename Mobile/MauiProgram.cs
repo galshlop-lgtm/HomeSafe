@@ -12,9 +12,17 @@ public sealed class App : Application
     public App() => UserAppTheme = AppTheme.Light;
 
     protected override Window CreateWindow(IActivationState? activationState)
-        => new(new NavigationPage(new HomePage())
+    {
+        var window = new Window(new NavigationPage(new HomePage())
         {
             BarBackgroundColor = Design.Paper,
             BarTextColor = Design.Ink
         });
+#if WINDOWS
+        window.Activated += (_, _) => DeviceBridge.Resume();
+        window.Deactivated += (_, _) => DeviceBridge.Pause();
+        window.Destroying += (_, _) => DeviceBridge.StopSound();
+#endif
+        return window;
+    }
 }
