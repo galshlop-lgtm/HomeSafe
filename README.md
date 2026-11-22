@@ -12,6 +12,22 @@ Install the debug APK on a 64-bit Android 8.0 or newer device, or run the MAUI p
 - **הגדרות → דימוי הגעה לבית** records a simulated arrival. The demo resets when you exit demo mode or restart the app.
 - The home editor uses OpenStreetMap tiles over the internet. The radius and pin can be edited independently of the server.
 
+## Run in the Android emulator from Visual Studio
+
+1. In Visual Studio Installer, install the **.NET Multi-platform App UI development** workload and the Android emulator. Open `HomeSafe.slnx` and set **HomeSafe.Mobile** as the startup project.
+2. Open **Tools → Android → Android Device Manager**. Create or start a virtual device, for example a Pixel with an API 35 or 36 image. Use an x86_64 image on Intel or AMD, or an arm64 image on an Arm host.
+3. In Visual Studio, select **Debug** and the running Android emulator, then press **F5**. Choose **ניסיון במצב הדגמה** to use the app immediately.
+
+To test family accounts on the emulator, start the **HomeSafe Local API** launch profile in Visual Studio or run the following from the solution directory:
+
+```sh
+dotnet run --project Server/HomeSafe.Server.csproj --launch-profile "HomeSafe Local API"
+```
+
+The API listens on `http://127.0.0.1:5080`. Android maps its host's loopback address to `10.0.2.2`, so the Debug account form suggests `http://10.0.2.2:5080` on a virtual device. Run the API on the same Windows machine as the Android emulator. A device with a previously saved server address keeps that address, which can be edited in the account form.
+
+If Visual Studio itself runs inside a Windows VM, the host hypervisor must expose nested virtualization for an accelerated Android emulator. Enable **Windows Hypervisor Platform** in the Windows guest, then confirm acceleration with `emulator -accel-check` from the Android SDK.
+
 ## Build and connect two devices
 
 Install the .NET 10 SDK and platform workload. Android needs JDK 21 and the Android SDK for API 36. An iOS build needs a Mac, compatible Xcode, and the MAUI iOS workload. The solution entry point is `HomeSafe.slnx`.
@@ -19,7 +35,7 @@ Install the .NET 10 SDK and platform workload. Android needs JDK 21 and the Andr
 ```sh
 dotnet workload install maui-android
 dotnet build Mobile/HomeSafe.Mobile.csproj -f net10.0-android -c Debug
-dotnet run --project Server/HomeSafe.Server.csproj --urls http://127.0.0.1:5080
+dotnet run --project Server/HomeSafe.Server.csproj --launch-profile "HomeSafe Local API"
 ```
 
 Run the server before creating accounts. An Android emulator can reach that development listener at `http://10.0.2.2:5080`. On two phones, point both to the same reachable HTTPS server. On iOS, use `dotnet workload install maui-ios` on the Mac, then build with `-f net10.0-ios` and the relevant signing settings. If Apple Push Notifications are configured, also pass `-p:HomeSafePush=true`.

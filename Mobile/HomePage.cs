@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using HomeSafe.Shared;
+using Microsoft.Maui.Devices;
 using static HomeSafe.Mobile.Design;
 
 namespace HomeSafe.Mobile;
@@ -196,7 +197,12 @@ internal sealed partial class HomePage : ContentPage
 
     private void AccountForm(FamilyRole? role)
     {
-        var address = Entry("https://homesafe.example", api.Endpoint, Keyboard.Url);
+        string serverAddress = api.Endpoint;
+#if ANDROID && DEBUG
+        if (serverAddress.Length == 0 && DeviceInfo.Current.DeviceType == DeviceType.Virtual)
+            serverAddress = "http://10.0.2.2:5080";
+#endif
+        var address = Entry("https://homesafe.example", serverAddress, Keyboard.Url);
         address.FlowDirection = FlowDirection.LeftToRight;
         var email = Entry("name@example.com", keyboard: Keyboard.Email);
         email.FlowDirection = FlowDirection.LeftToRight;
