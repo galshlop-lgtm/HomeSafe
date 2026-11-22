@@ -20,7 +20,8 @@ public sealed class UserRow
     public Guid? ParentId { get; set; }
     public bool Sharing { get; set; }
     public HomeArea? Home { get; set; }
-    public int[] Reminders { get; set; } = [30, 10];
+    public int[] Reminders { get; set; } = [15];
+    public PrivacySettings Privacy { get; set; } = new(false, false, false, false);
     public DeviceInput? Device { get; set; }
 }
 
@@ -39,6 +40,15 @@ public sealed class ReturnRow
     public int Revision { get; set; } = 1;
     public int[] SentReminders { get; set; } = [];
     public LocationFix? Latest { get; set; }
+    public Presence ObservedPresence { get; set; }
+    public DateTimeOffset? ObservedAt { get; set; }
+    public DateTimeOffset? LastCommunication { get; set; }
+    public DateTimeOffset? GraceUntil { get; set; }
+    public DateTimeOffset? EmergencyUntil { get; set; }
+    public int? Battery { get; set; }
+    public bool BatteryWarningSent { get; set; }
+    public bool Approaching { get; set; }
+    public List<ExtensionEntry> Extensions { get; set; } = [];
     public DateTimeOffset? ArrivedAt { get; set; }
     public DateTimeOffset? AlarmAt { get; set; }
     public int EscalationStage { get; set; }
@@ -53,6 +63,7 @@ public sealed class Delivery
     public required DateTimeOffset NextTry { get; set; }
     public int Attempts { get; set; }
     public bool Accepted { get; set; }
+    public DateTimeOffset? ReceivedAt { get; set; }
 }
 
 public sealed class Store

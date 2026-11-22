@@ -4,7 +4,17 @@ public enum FamilyRole { Parent, Child }
 
 public enum ReturnStatus { Pending, Accepted, Arrived, Overdue, LocationUnavailable }
 
-public enum AlertKind { Request, Reminder, Arrival, Overdue, LocationUnavailable, Escalation }
+public enum AlertKind { Request, Reminder, Arrival, Overdue, LocationUnavailable, Escalation, Extension, Grace, Battery, EmergencyLocation }
+
+public enum ExtensionDecision { Pending, Approved, Rejected, Expired }
+
+public sealed record HealthStatus(string Status, string Service, int Protocol);
+public sealed record ExtensionRequest(int Minutes, int Revision);
+public sealed record ExtensionResponse(Guid ExtensionId, bool Approve);
+public sealed record ExtensionEntry(Guid Id, int Minutes, int Revision, ExtensionDecision Decision, DateTimeOffset RequestedAt);
+public sealed record MonitoringInput(Guid RequestId, Presence Presence, DateTimeOffset ObservedAt, int? Battery, bool Approaching = false, bool HasLocationSample = true);
+public sealed record MonitoringReceipt(bool ContinueMonitoring, bool EmergencyLocationRequested);
+public sealed record PrivacySettings(bool SmartGrace, bool EmergencyLocation, bool LowBatteryToParent, bool AutoApproveExtensions);
 
 public enum Presence { Unknown, Inside, Outside }
 
@@ -28,11 +38,14 @@ public sealed record CheckInInput(int Revision);
 public sealed record ReturnView(
     Guid Id, Guid ChildId, string ChildName, DateTimeOffset Deadline, HomeArea Home, ReturnStatus Status,
     int Revision, DateTimeOffset? ArrivedAt, bool LateArrival, bool Acknowledged,
-    LocationFix? LastKnown, bool PushAccepted);
+    LocationFix? LastKnown, bool PushAccepted,
+    ExtensionEntry[]? Extensions = null, DateTimeOffset? LastCommunication = null,
+    int? Battery = null, bool DeviceUnavailable = false, DateTimeOffset? GraceUntil = null,
+    bool EmergencyLocationRequested = false, bool DeviceConfirmedPush = false);
 
 public sealed record FamilyView(
     Account Me, Account? Parent, Account[] Children, HomeArea? Home, bool SharingEnabled,
-    int[] ReminderMinutes, ReturnView[] Requests, bool PushConfigured, bool DeviceRegistered);
+    int[] ReminderMinutes, ReturnView[] Requests, bool PushConfigured, bool DeviceRegistered, PrivacySettings? Privacy = null);
 
 public sealed record AlertMessage(
     Guid Id, Guid RequestId, AlertKind Kind, string Title, string Body, bool Urgent,
@@ -59,6 +72,15 @@ public static class ReturnRules
             || fix.ObservedAt > asOf || fix.ObservedAt < asOf.AddMinutes(-3))
             return Presence.Unknown;
 
+        var distance = DistanceMetres(home, fix);
+
+        if (distance + fix.Accuracy <= home.Radius) return Presence.Inside;
+        if (distance - fix.Accuracy > home.Radius) return Presence.Outside;
+        return Presence.Unknown;
+    }
+
+    public static double DistanceMetres(HomeArea home, LocationFix fix)
+    {
         const double earthRadius = 6_371_000;
         const double radians = Math.PI / 180;
         double latitudeDelta = (fix.Latitude - home.Latitude) * radians;
@@ -66,10 +88,8 @@ public static class ReturnRules
         double a = Math.Pow(Math.Sin(latitudeDelta / 2), 2)
             + Math.Cos(home.Latitude * radians) * Math.Cos(fix.Latitude * radians)
             * Math.Pow(Math.Sin(longitudeDelta / 2), 2);
-        double distance = 2 * earthRadius * Math.Asin(Math.Sqrt(Math.Clamp(a, 0, 1)));
+        return 2 * earthRadius * Math.Asin(Math.Sqrt(Math.Clamp(a, 0, 1)));
 
-        if (distance + fix.Accuracy <= home.Radius) return Presence.Inside;
-        if (distance - fix.Accuracy > home.Radius) return Presence.Outside;
-        return Presence.Unknown;
     }
+
 }

@@ -25,6 +25,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Shared/HomeSafe.Shared.csproj" />
+    <AssemblyMetadata Include="HomeSafeTrustedServers" Value="$(HomeSafeTrustedServers)" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <MauiIcon Include="Resources/AppIcon/icon.svg" Color="#2258E7" />
     <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#2258E7" BaseSize="160,160" />

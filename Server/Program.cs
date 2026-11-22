@@ -30,7 +30,7 @@ app.Use(async (ctx, next) =>
         await ctx.Response.WriteAsJsonAsync(new { error = error.Message });
     }
 });
-app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health", () => new HealthStatus("ok", "HomeSafe", 2));
 var api = app.MapGroup("/api");
 
 api.MapPost("/auth/register", (RegisterInput input, Store store, TimeProvider clock) =>
@@ -140,7 +140,13 @@ api.MapPut("/settings/sharing", (SharingInput input, HttpContext ctx, Store stor
             throw new ApiError(409, "יש להתחבר להורה לפני הפעלת שיתוף המיקום.");
         child.Sharing = input.Enabled;
         if (!input.Enabled)
-            foreach (var request in state.Requests.Where(r => r.ChildId == child.Account.Id)) request.Latest = null;
+            foreach (var request in state.Requests.Where(r => r.ChildId == child.Account.Id))
+            {
+                request.Latest = null;
+                request.EmergencyUntil = null;
+                request.ObservedPresence = Presence.Unknown;
+                request.Approaching = false;
+            }
         return Results.NoContent();
     }, FamilyRole.Child));
 
@@ -179,6 +185,7 @@ api.MapPost("/returns", (ReturnInput input, HttpContext ctx, Store store, TimePr
             current.Revision++;
             current.Status = ReturnStatus.Pending;
             current.SentReminders = [];
+            ReturnWork.ExpireExtensions(current);
             ReturnWork.RequestChanged(state, current, parent, now);
             return new { current.Id };
         }
@@ -211,33 +218,67 @@ api.MapPost("/returns/{id:guid}/acknowledge", (Guid id, HttpContext ctx, Store s
     {
         var row = ReturnWork.RequireRequest(state, id, user.Account.Id);
         if (!ReturnRules.IsUrgent(row.Status)) return Results.NoContent();
-        if (user.Account.Id == row.ParentId) row.ParentAcknowledged = true;
+        if (user.Account.Id == row.ParentId)
+        {
+            row.ParentAcknowledged = true;
+            row.Latest = null;
+            row.EmergencyUntil = null;
+        }
         else row.ChildAcknowledged = true;
         state.Outbox.RemoveAll(x => x.Recipient == user.Account.Id && x.Message.RequestId == id
             && x.Message.Urgent && !x.Accepted);
         return Results.NoContent();
     }));
 
-api.MapPost("/locations", (LocationReport input, HttpContext ctx, Store store, TimeProvider clock) =>
-    Update(ctx, store, clock, (state, child, now) =>
+api.MapPost("/alerts/{id:guid}/receipt", (Guid id, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, user, now) =>
     {
-        if (!child.Sharing) throw new ApiError(403, "שיתוף המיקום כבוי.");
-        var row = ReturnWork.RequireRequest(state, input.RequestId, child.Account.Id);
-        var latest = state.Requests.LastOrDefault(r => r.ChildId == child.Account.Id);
-        var fix = input.Fix;
-        if (row != latest || !ReturnRules.NeedsMonitoring(row.Status) || row.Deadline.AddHours(2) < now)
-            return new LocationReceipt(false);
-        if (fix is null || !ReturnRules.ValidCoordinates(fix.Latitude, fix.Longitude)
-            || !double.IsFinite(fix.Accuracy) || fix.Accuracy is <= 0 or > 5_000
-            || fix.ObservedAt < row.CreatedAt || fix.ObservedAt < now.AddMinutes(-3) || fix.ObservedAt > now.AddSeconds(10))
-            throw new ApiError(400, "נתון המיקום אינו עדכני או תקין.");
-        if (row.Latest is {} previous && previous.ObservedAt >= fix.ObservedAt) return new LocationReceipt(true);
-        if (fix.ObservedAt > now) fix = fix with { ObservedAt = now };
-        if (now >= row.Deadline && fix.ObservedAt > row.Deadline) ReturnWork.AdvanceOne(state, row, now);
-        row.Latest = fix;
-        if (ReturnRules.Locate(row.Home, fix, now) == Presence.Inside) ReturnWork.Arrive(state, row, fix, now);
-        return new LocationReceipt(ReturnRules.NeedsMonitoring(row.Status));
-    }, FamilyRole.Child));
+        var message = state.Outbox.Find(x => x.Recipient == user.Account.Id && x.Message.Id == id);
+        if (message is not null) message.ReceivedAt ??= now;
+        return Results.NoContent();
+    }));
+
+api.MapPost("/locations", (LocationReport input, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, child, now) => Monitoring.SaveEmergency(state, child, input, now), FamilyRole.Child));
+
+api.MapPost("/monitoring", (MonitoringInput input, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, child, now) => Monitoring.Record(state, child, input, now), FamilyRole.Child));
+
+api.MapPut("/settings/privacy", (PrivacySettings input, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, user, _) =>
+    {
+        if (user.Account.Role == FamilyRole.Parent)
+            user.Privacy = user.Privacy with { SmartGrace = input.SmartGrace,
+                LowBatteryToParent = input.LowBatteryToParent, AutoApproveExtensions = input.AutoApproveExtensions };
+        else
+        {
+            user.Privacy = user.Privacy with { EmergencyLocation = input.EmergencyLocation };
+            if (!input.EmergencyLocation)
+                foreach (var row in state.Requests.Where(r => r.ChildId == user.Account.Id))
+                {
+                    row.EmergencyUntil = null;
+                    row.Latest = null;
+                }
+        }
+        return Results.NoContent();
+    }));
+
+api.MapPost("/returns/{id:guid}/emergency-location", (Guid id, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, parent, now) =>
+    {
+        Monitoring.RequestEmergency(state, ReturnWork.RequireRequest(state, id, parent.Account.Id), now);
+        return Results.NoContent();
+    }, FamilyRole.Parent));
+
+api.MapPost("/returns/{id:guid}/extensions", (Guid id, ExtensionRequest input, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, child, now) =>
+        ReturnWork.RequestExtension(state, ReturnWork.RequireRequest(state, id, child.Account.Id), input, now),
+        FamilyRole.Child));
+
+api.MapPost("/returns/{id:guid}/extensions/decide", (Guid id, ExtensionResponse input, HttpContext ctx, Store store, TimeProvider clock) =>
+    Update(ctx, store, clock, (state, parent, now) =>
+        ReturnWork.DecideExtension(state, ReturnWork.RequireRequest(state, id, parent.Account.Id), input, now),
+        FamilyRole.Parent));
 
 app.Run();
 

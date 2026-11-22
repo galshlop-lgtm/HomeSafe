@@ -27,10 +27,12 @@ public static class ReturnWork
             $"מאת {parent.Account.Name}. פתחו את HomeSafe כדי לראות את שעת החזרה.", now);
     }
 
-    public static void Arrive(State state, ReturnRow row, LocationFix fix, DateTimeOffset now)
+    public static void Arrive(State state, ReturnRow row, DateTimeOffset observed, DateTimeOffset now)
     {
         row.Status = ReturnStatus.Arrived;
-        row.ArrivedAt = fix.ObservedAt;
+        row.ArrivedAt = observed;
+        row.EmergencyUntil = null;
+        ExpireExtensions(row);
         row.Latest = null;
         state.Outbox.RemoveAll(x => x.Message.RequestId == row.Id && !x.Accepted);
         var child = state.Users.First(u => u.Account.Id == row.ChildId);
@@ -46,14 +48,18 @@ public static class ReturnWork
         {
             if (now >= row.Deadline)
             {
-                var presence = ReturnRules.Locate(row.Home, row.Latest, row.Deadline);
-                if (presence == Presence.Inside)
+                if (row.GraceUntil > now) return;
+                bool fresh = row.ObservedAt >= now.AddSeconds(-45);
+                if (row.GraceUntil is null && parent.Privacy.SmartGrace && fresh
+                    && now < row.Deadline.AddMinutes(1) && row.Approaching && row.ObservedPresence == Presence.Outside)
                 {
-                    Arrive(state, row, row.Latest!, now);
+                    row.GraceUntil = row.Deadline.AddMinutes(10);
+                    Queue(state, row, row.ChildId, AlertKind.Grace, "שעת החזרה עברה",
+                        "זוהתה התקרבות לבית. יש להגיע בהקדם כדי למנוע התרעה.", now);
                     return;
                 }
-
-                row.Status = presence == Presence.Outside
+                ExpireExtensions(row);
+                row.Status = fresh && row.ObservedPresence == Presence.Outside
                     ? ReturnStatus.Overdue : ReturnStatus.LocationUnavailable;
                 row.AlarmAt = now;
                 state.Outbox.RemoveAll(x => x.Message.RequestId == row.Id && !x.Accepted);
@@ -61,7 +67,7 @@ public static class ReturnWork
                 return;
             }
 
-            var dueReminders = parent.Reminders
+            var dueReminders = parent.Reminders.Append(15).Distinct()
                 .Where(m => row.Deadline.AddMinutes(-m) <= now && !row.SentReminders.Contains(m)).ToArray();
             if (dueReminders.Length > 0)
             {
@@ -71,7 +77,7 @@ public static class ReturnWork
                 {
                     int minutes = Math.Max(1, (int)Math.Ceiling((row.Deadline - now).TotalMinutes));
                     Queue(state, row, row.ChildId, AlertKind.Reminder, "תזכורת לחזרה הביתה",
-                        $"נותרו כ־{minutes} דקות עד שעת החזרה.", now);
+                        minutes == 15 ? "נשארו 15 דקות עד שעת החזרה הביתה" : $"נותרו כ־{minutes} דקות עד שעת החזרה.", now);
                 }
             }
         }
@@ -84,6 +90,57 @@ public static class ReturnWork
         }
     }
 
+    public static void ConfirmOverdue(State state, ReturnRow row, DateTimeOffset now)
+    {
+        row.Status = ReturnStatus.Overdue;
+        state.Outbox.RemoveAll(x => x.Message.RequestId == row.Id && !x.Accepted && x.Message.Urgent);
+        SendAlarm(state, row, now, escalation: false);
+    }
+
+    public static void ExpireExtensions(ReturnRow row)
+    {
+        int index = row.Extensions.FindIndex(x => x.Decision == ExtensionDecision.Pending);
+        if (index >= 0) row.Extensions[index] = row.Extensions[index] with { Decision = ExtensionDecision.Expired };
+    }
+
+    public static ExtensionEntry RequestExtension(State state, ReturnRow row, ExtensionRequest input, DateTimeOffset now)
+    {
+        if (input.Minutes is not (15 or 30)) throw new ApiError(400, "אפשר לבקש 15 או 30 דקות.");
+        if (row.Status is not (ReturnStatus.Pending or ReturnStatus.Accepted) || now >= row.Deadline || input.Revision != row.Revision)
+            throw new ApiError(409, "מועד החזרה השתנה או פג.");
+        var existing = row.Extensions.Find(x => x.Decision == ExtensionDecision.Pending);
+        if (existing is not null) return existing;
+        var entry = new ExtensionEntry(Guid.NewGuid(), input.Minutes, row.Revision, ExtensionDecision.Pending, now);
+        row.Extensions.Add(entry);
+        var parent = state.Users.First(u => u.Account.Id == row.ParentId);
+        if (parent.Privacy.AutoApproveExtensions)
+            return DecideExtension(state, row, new ExtensionResponse(entry.Id, true), now);
+        Queue(state, row, row.ParentId, AlertKind.Extension, "בקשה לתוספת זמן",
+            $"התקבלה בקשה לעוד {entry.Minutes} דקות. אפשר לענות בפרטי הבקשה.", now);
+        return entry;
+    }
+
+    public static ExtensionEntry DecideExtension(State state, ReturnRow row, ExtensionResponse input, DateTimeOffset now)
+    {
+        int index = row.Extensions.FindIndex(x => x.Id == input.ExtensionId);
+        if (index < 0) throw new ApiError(404, "בקשת ההארכה אינה זמינה.");
+        var entry = row.Extensions[index];
+        if (entry.Decision != ExtensionDecision.Pending) return entry;
+        if (entry.Revision != row.Revision || now >= row.Deadline || !ReturnRules.NeedsMonitoring(row.Status))
+            throw new ApiError(409, "בקשת ההארכה פגה.");
+        var decision = input.Approve ? ExtensionDecision.Approved : ExtensionDecision.Rejected;
+        row.Extensions[index] = entry with { Decision = decision };
+        if (input.Approve)
+        {
+            row.Deadline = row.Deadline.AddMinutes(entry.Minutes);
+            row.Revision++;
+            row.SentReminders = [];
+        }
+        Queue(state, row, row.ChildId, AlertKind.Extension, "בקשת תוספת זמן",
+            input.Approve ? "ההארכה אושרה. שעת החזרה עודכנה." : "הבקשה נדחתה. שעת החזרה נשארה בתוקף.", now);
+        return row.Extensions[index];
+    }
+
     private static void SendAlarm(State state, ReturnRow row, DateTimeOffset now, bool escalation)
     {
         var child = state.Users.First(u => u.Account.Id == row.ChildId).Account;
@@ -93,11 +150,11 @@ public static class ReturnWork
         if (now > row.Deadline.AddHours(2)) return;
         if (!row.ParentAcknowledged)
             Queue(state, row, row.ParentId, kind, missed ? "ילדך עדיין לא הגיע הביתה" : "לא ניתן לאמת הגעה",
-                missed ? $"{child.Name} היה/תה מחוץ לאזור הבית במועד החזרה."
+                missed ? $"{child.Name} זוהה/תה מחוץ לאזור הבית לאחר שעת החזרה."
                     : $"אין מיקום מספיק עדכני ומדויק עבור {child.Name}. כדאי ליצור קשר.", now, urgent: true);
         if (!row.ChildAcknowledged)
             Queue(state, row, row.ChildId, kind, missed ? "שעת החזרה הביתה עברה" : "לא הצלחנו לאמת את הגעתך",
-                missed ? "המיקום שלך היה מחוץ לאזור הבית במועד שסוכם."
+                missed ? "המיקום שלך זוהה מחוץ לאזור הבית לאחר המועד שסוכם."
                     : "יש לבדוק את הרשאות המיקום והחיבור או להתקשר להורה.", now, urgent: true);
     }
 
@@ -106,10 +163,10 @@ public static class ReturnWork
         bool changed = false;
         foreach (var row in state.Requests)
         {
-            var previous = (row.Status, row.EscalationStage, row.SentReminders.Length);
+            var previous = (row.Status, row.EscalationStage, row.SentReminders.Length, row.GraceUntil);
             AdvanceOne(state, row, now);
-            changed |= previous != (row.Status, row.EscalationStage, row.SentReminders.Length);
-            if (row.Latest is {} fix && now - fix.ObservedAt > TimeSpan.FromHours(24))
+            changed |= previous != (row.Status, row.EscalationStage, row.SentReminders.Length, row.GraceUntil);
+            if (row.Latest is {} fix && (row.EmergencyUntil is null || row.EmergencyUntil <= now || now - fix.ObservedAt > TimeSpan.FromMinutes(2)))
             {
                 row.Latest = null;
                 changed = true;
@@ -133,15 +190,20 @@ public static class ReturnWork
             {
                 var child = state.Users.First(u => u.Account.Id == r.ChildId);
                 bool parentView = r.ParentId == id;
-                var lastKnown = parentView && child.Sharing && r.Latest is {} fix
-                    && now - fix.ObservedAt <= TimeSpan.FromHours(24) ? fix : null;
+                bool emergency = Monitoring.EmergencyActive(child, r, now);
+                var lastKnown = parentView && emergency && r.Latest is {} fix
+                    && now - fix.ObservedAt <= TimeSpan.FromMinutes(2) ? fix : null;
                 bool pushAccepted = state.Outbox.Any(x => x.Recipient == id && x.Message.RequestId == r.Id
                     && x.Message.Urgent && x.Accepted);
                 return new ReturnView(r.Id, r.ChildId, child.Account.Name, r.Deadline, r.Home, r.Status,
                     r.Revision, r.ArrivedAt, r.ArrivedAt > r.Deadline,
-                    parentView ? r.ParentAcknowledged : r.ChildAcknowledged, lastKnown, pushAccepted);
+                    parentView ? r.ParentAcknowledged : r.ChildAcknowledged, lastKnown, pushAccepted, r.Extensions.Count == 0 ? null : r.Extensions.ToArray(),
+                    r.LastCommunication, r.Battery,
+                    ReturnRules.NeedsMonitoring(r.Status) && (r.LastCommunication ?? r.CreatedAt) < now.AddMinutes(-3),
+                    r.GraceUntil, emergency, state.Outbox.Any(x => x.Recipient == id
+                        && x.Message.RequestId == r.Id && x.Message.Urgent && x.ReceivedAt is not null));
             }).ToArray();
         return new(user.Account, parent?.Account, children, (parent ?? user).Home,
-            user.Sharing, (parent ?? user).Reminders, requests, pushConfigured, user.Device is not null);
+            user.Sharing, (parent ?? user).Reminders, requests, pushConfigured, user.Device is not null, user.Privacy);
     }
 }

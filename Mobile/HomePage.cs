@@ -100,6 +100,10 @@ internal sealed partial class HomePage : ContentPage
                         offlineAlert = null;
                 }
             }
+            if (emergencyPage is not null && Navigation.NavigationStack.LastOrDefault() == emergencyPage
+                && family.Requests.FirstOrDefault(x => x.Id == emergencyRequest)?.LastKnown is null)
+                await Navigation.PopAsync();
+
             if (rebuild && AlarmIsVisible && !testingAlarm && alarm is {} displayed
                 && family.Requests.Any(r => r.Id == displayed.Id && !ReturnRules.IsUrgent(r.Status)))
             {
@@ -137,7 +141,15 @@ internal sealed partial class HomePage : ContentPage
         a.Home == b.Home && a.Me == b.Me && a.Parent == b.Parent && a.SharingEnabled == b.SharingEnabled
         && a.PushConfigured == b.PushConfigured && a.DeviceRegistered == b.DeviceRegistered
         && a.Children.SequenceEqual(b.Children) && a.ReminderMinutes.SequenceEqual(b.ReminderMinutes)
-        && a.Requests.Select(r => r with { LastKnown = null }).SequenceEqual(b.Requests.Select(r => r with { LastKnown = null }));
+        && a.Privacy == b.Privacy && a.Requests.Length == b.Requests.Length
+        && a.Requests.Zip(b.Requests).All(pair =>
+            pair.First with { LastKnown = null, Extensions = null, LastCommunication = null }
+                == pair.Second with { LastKnown = null, Extensions = null, LastCommunication = null }
+            && pair.First.LastCommunication?.ToUnixTimeSeconds() / 60 == pair.Second.LastCommunication?.ToUnixTimeSeconds() / 60
+            && (pair.First.Extensions ?? []).SequenceEqual(pair.Second.Extensions ?? []));
+
+    private ContentPage? emergencyPage;
+    private Guid? emergencyRequest;
 
     private bool AlarmIsVisible => alarm is not null || offlineAlert is not null && root.BackgroundColor == SoftRed;
 
@@ -148,7 +160,9 @@ internal sealed partial class HomePage : ContentPage
             && r.Id != snoozed && DateTimeOffset.UtcNow < r.Deadline.AddHours(2));
         if (next is not null)
         {
-            if (alarm?.Id != next.Id) ShowAlarm(next);
+            if (alarm?.Id != next.Id || alarm.Status != next.Status) ShowAlarm(next);
+            else if (alarm.EmergencyLocationRequested != next.EmergencyLocationRequested)
+                ShowAlarm(next, refreshOnly: true);
             return true;
         }
         if (offlineAlert is { } pending && !online && snoozed != pending.RequestId && !AlarmIsVisible)
@@ -197,28 +211,42 @@ internal sealed partial class HomePage : ContentPage
 
     private void AccountForm(FamilyRole? role)
     {
-        string serverAddress = api.Endpoint;
-#if ANDROID && DEBUG
-        if (serverAddress.Length == 0 && DeviceInfo.Current.DeviceType == DeviceType.Virtual)
-            serverAddress = "http://10.0.2.2:5080";
-#elif WINDOWS && DEBUG
-        if (serverAddress.Length == 0) serverAddress = "http://127.0.0.1:5080";
-#endif
-        var address = Entry("https://homesafe.example", serverAddress, Keyboard.Url);
+        var address = Entry("https://api.homesafe.example", api.Endpoint, Keyboard.Url);
         address.FlowDirection = FlowDirection.LeftToRight;
         var email = Entry("name@example.com", keyboard: Keyboard.Email);
         email.FlowDirection = FlowDirection.LeftToRight;
         var password = Entry("לפחות 10 תווים"); password.IsPassword = true;
         var name = Entry("השם שיוצג למשפחה");
         var phone = Entry("אופציונלי", keyboard: Keyboard.Telephone);
-        var fields = new List<View> { Field("כתובת שרת HomeSafe", address) };
+        var connection = Text("", 14, Muted);
+        address.TextChanged += (_, _) => connection.Text = "";
+        async Task CheckConnection()
+        {
+            try
+            {
+                string typed = address.Text ?? "";
+                await api.ValidateEndpoint(typed);
+                if (typed != address.Text) throw new InvalidOperationException("כתובת השרת השתנתה. יש לבדוק שוב.");
+                connection.Text = "✓ החיבור לשרת הצליח";
+                connection.TextColor = Green;
+            }
+            catch (Exception ex)
+            {
+                connection.Text = ex.Message;
+                connection.TextColor = Red;
+                throw;
+            }
+        }
+
+        var fields = new List<View> { Field("כתובת שרת HTTPS", address),
+            Button("בדוק חיבור לשרת", () => Run(CheckConnection), false), connection };
         if (role is not null) fields.Add(Field("שם", name));
         fields.Add(Field("דוא״ל", email));
         fields.Add(Field("סיסמה", password));
         if (role is not null) fields.Add(Field("טלפון לשיחות מהירות", phone));
         fields.Add(Button(role is null ? "כניסה" : "יצירת חשבון", async () => await Run(async () =>
         {
-            api.SetEndpoint(address.Text ?? "");
+            await CheckConnection();
             var session = role is {} selected
                 ? await api.Send<Session>(HttpMethod.Post, "auth/register",
                     new RegisterInput(name.Text ?? "", email.Text ?? "", password.Text ?? "", selected, phone.Text))

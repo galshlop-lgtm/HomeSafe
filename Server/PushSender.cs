@@ -96,12 +96,11 @@ public sealed class PushSender(HttpClient client, IConfiguration config, ILogger
         var aps = new Dictionary<string, object>
         {
             ["alert"] = new { title = a.Title, body = a.Body },
-            ["sound"] = critical ? new { critical = 1, name = "alarm.wav", volume = 1.0 }
-                : a.Urgent ? "alarm.wav" : "default",
-            ["interruption-level"] = critical ? "critical" : a.Urgent ? "time-sensitive" : "active",
+            ["interruption-level"] = critical ? "critical" : a.Urgent ? "time-sensitive" : "passive",
             ["content-available"] = 1,
             ["thread-id"] = a.RequestId.ToString()
         };
+        if (a.Urgent) aps["sound"] = critical ? new { critical = 1, name = "alarm.wav", volume = 1.0 } : "alarm.wav";
         request.Content = JsonContent.Create(new
         {
             aps, requestId = a.RequestId, id = a.Id, kind = a.Kind.ToString(), title = a.Title,

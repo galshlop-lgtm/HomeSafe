@@ -1,3 +1,4 @@
+using Microsoft.Maui.Devices;
 using HomeSafe.Shared;
 using Microsoft.Maui.Storage;
 
@@ -123,27 +124,121 @@ internal static partial class DeviceBridge
             && now < latest.Deadline.AddHours(2) ? latest : null;
 
         if (request is not null) Tracking = Monitor(request);
-        else if (Tracking)
+        else
         {
-            Tracking = false;
-            StopTracking();
+            approachSamples.Clear();
+            if (monitoring is not null)
+            {
+                Tracking = false;
+                StopTracking();
+            }
         }
+        if (family.Me.Role == FamilyRole.Child && family.Requests.FirstOrDefault() is {} heartbeat
+            && ReturnRules.NeedsMonitoring(heartbeat.Status) && now < heartbeat.Deadline.AddHours(2)
+            && now - lastHeartbeat >= TimeSpan.FromSeconds(60))
+            _ = SendMonitoring(heartbeat, null);
+
     }
 
-    internal static async Task Report(Guid id, LocationFix fix)
+    private const string EmergencyKey = "homesafe.emergencyConsent";
+    internal static bool EmergencyConsent => IsLinkedDevice
+        && Preferences.Default.Get(EmergencyKey, "") == Preferences.Default.Get(AccountKey, "");
+    internal static void SetEmergencyConsent(bool enabled)
     {
-        if (!IsLinkedDevice) return;
+        if (enabled) Preferences.Default.Set(EmergencyKey, Preferences.Default.Get(AccountKey, ""));
+        else Preferences.Default.Remove(EmergencyKey);
+    }
+
+    private static Guid sampleRequest;
+    private static readonly Queue<LocationFix> approachSamples = new();
+    private static DateTimeOffset lastHeartbeat;
+    private static bool reporting;
+
+    internal static Task Heartbeat(Guid id) =>
+        monitoring is {} row && row.Id == id && DateTimeOffset.UtcNow - lastHeartbeat >= TimeSpan.FromSeconds(60)
+            ? SendMonitoring(row, null) : Task.CompletedTask;
+
+    internal static async Task ConfirmReceipt(AlertMessage alert)
+    {
+        if (!alert.Urgent || !IsLinkedDevice) return;
         try
         {
             await ApiClient.Current.Restore();
-            var receipt = await ApiClient.Current.Send<LocationReceipt>(HttpMethod.Post, "locations", new LocationReport(id, fix));
-            if (!receipt.ContinueMonitoring) StopIfCurrent(id);
+            if (ApiClient.Current.SignedIn)
+                await ApiClient.Current.Send<object>(HttpMethod.Post, $"alerts/{alert.Id}/receipt");
+        }
+        catch { }
+    }
+
+    internal static Task Report(Guid id, LocationFix fix) =>
+        monitoring is {} row && row.Id == id ? SendMonitoring(row, fix) : Task.CompletedTask;
+
+    private static async Task SendMonitoring(ReturnView row, LocationFix? fix)
+    {
+        if (reporting || !IsLinkedDevice) return;
+        reporting = true;
+        lastHeartbeat = DateTimeOffset.UtcNow;
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (sampleRequest != row.Id)
+            {
+                sampleRequest = row.Id;
+                approachSamples.Clear();
+            }
+            var presence = ReturnRules.Locate(row.Home, fix, now);
+            bool approaching = presence == Presence.Outside && Approaching(row.Home, fix!);
+            if (fix is not null && presence == Presence.Unknown) approachSamples.Clear();
+
+            await ApiClient.Current.Restore();
+            if (!ApiClient.Current.SignedIn) return;
+            var receipt = await ApiClient.Current.Send<MonitoringReceipt>(HttpMethod.Post, "monitoring",
+                new MonitoringInput(row.Id, presence, presence == Presence.Unknown ? now : fix!.ObservedAt,
+                    BatteryPercent(), approaching, HasLocationSample: fix is not null));
+            if (!receipt.ContinueMonitoring) StopIfCurrent(row.Id);
+            else if (receipt.EmergencyLocationRequested && fix is not null && presence != Presence.Unknown
+                && EmergencyConsent && monitoring?.Id == row.Id && Preferences.Default.Get(ConsentKey, "") == Preferences.Default.Get(AccountKey, ""))
+                await ApiClient.Current.Send<LocationReceipt>(HttpMethod.Post, "locations", new LocationReport(row.Id, fix));
         }
         catch (RequestFailure ex) when (ex.Code is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
         {
-            StopIfCurrent(id);
+            StopIfCurrent(row.Id);
         }
         catch { }
+        finally { reporting = false; }
+    }
+
+    private static int? BatteryPercent()
+    {
+        try
+        {
+            double charge = Battery.Default.ChargeLevel;
+            return charge is >= 0 and <= 1 ? (int)Math.Round(charge * 100) : null;
+        }
+        catch (Exception ex) when (ex is FeatureNotSupportedException or FeatureNotEnabledException) { return null; }
+    }
+
+    private static bool Approaching(HomeArea home, LocationFix newest)
+    {
+        if (approachSamples.TryPeek(out var first) && newest.ObservedAt - first.ObservedAt > TimeSpan.FromMinutes(2))
+            approachSamples.Clear();
+        if (approachSamples.Count > 0 && newest.ObservedAt <= approachSamples.Last().ObservedAt) return false;
+        approachSamples.Enqueue(newest);
+        if (approachSamples.Count > 3) approachSamples.Dequeue();
+        if (approachSamples.Count != 3) return false;
+        var samples = approachSamples.ToArray();
+        double slowest = double.PositiveInfinity;
+        for (int i = 1; i < samples.Length; i++)
+        {
+            var previous = samples[i - 1];
+            var current = samples[i];
+            var seconds = (current.ObservedAt - previous.ObservedAt).TotalSeconds;
+            if (seconds is < 8 or > 60) return false;
+            double progress = ReturnRules.DistanceMetres(home, previous) - ReturnRules.DistanceMetres(home, current)
+                - previous.Accuracy - current.Accuracy;
+            slowest = Math.Min(slowest, progress / seconds);
+        }
+        return slowest > 0 && (ReturnRules.DistanceMetres(home, newest) + newest.Accuracy - home.Radius) / slowest <= 300;
     }
 
     private static void StopIfCurrent(Guid requestId) => MainThread.BeginInvokeOnMainThread(() =>
@@ -165,7 +260,7 @@ internal static partial class DeviceBridge
             var family = await ApiClient.Current.Family();
             var request = family.Requests.FirstOrDefault(r => r.Id == id);
             if (request is null || request.Acknowledged || request.Status == ReturnStatus.Arrived
-                || request.Deadline > DateTimeOffset.UtcNow) return null;
+                || request.Deadline > DateTimeOffset.UtcNow || request.GraceUntil > DateTimeOffset.UtcNow) return null;
             if (request.Status == ReturnStatus.Overdue)
                 return new(Guid.NewGuid(), id, AlertKind.Overdue,
                     family.Me.Role == FamilyRole.Parent ? "ילדך עדיין לא הגיע הביתה" : "שעת החזרה הביתה עברה",
@@ -178,6 +273,9 @@ internal static partial class DeviceBridge
 
     internal static void Reset()
     {
+        SetEmergencyConsent(false);
+        approachSamples.Clear();
+        lastHeartbeat = default;
         Preferences.Default.Remove(AccountKey);
         Preferences.Default.Remove(ConsentKey);
         Preferences.Default.Remove(RevokeKey);

@@ -114,12 +114,39 @@ internal sealed partial class HomePage
         {
             layout.Add(Box(Stack(9, Text("פרטיות ומיקום", 19, Ink, true),
                 Pill((demo is not null ? model.SharingEnabled : DeviceBridge.Tracking) ? "ניטור פעיל" : "ניטור אינו פעיל", Blue, SoftBlue),
-                Text("שיתוף המיקום מיועד להורה המקושר ולמשך בקשת חזרה. אפשר לכבות אותו בכל עת.", 14, Muted),
-                Button(model.SharingEnabled ? "כיבוי שיתוף מיקום" : "הפעלת שיתוף מיקום",
+                Text("בדיקת ההגעה מתבצעת במכשיר. אפשר לבטל אותה בכל עת.", 14, Muted),
+                Button(model.SharingEnabled ? "כיבוי בדיקת הגעה" : "הפעלת בדיקת הגעה",
                     () => SetSharing(!model.SharingEnabled)),
                 model.SharingEnabled && demo is null
                     ? Button("בדיקת הרשאות מיקום", () => SetSharing(true), false)
                     : Button("חיבור להורה", () => OpenPairing(), false))));
+        }
+        if (demo is null)
+        {
+            var privacy = model.Privacy ?? new PrivacySettings(false, false, false, false);
+            var grace = new Switch { IsToggled = privacy.SmartGrace };
+            var battery = new Switch { IsToggled = privacy.LowBatteryToParent };
+            var automatic = new Switch { IsToggled = privacy.AutoApproveExtensions };
+            var emergency = new Switch { IsToggled = privacy.EmergencyLocation && DeviceBridge.EmergencyConsent };
+            var options = Stack(9, Text("עדכונים ופרטיות", 19, Ink, true));
+            if (parent)
+            {
+                options.Add(Columns(Text("השהיית התרעה בהתקרבות מאומתת לבית"), grace));
+                options.Add(Columns(Text("עדכון הורה על סוללה חלשה"), battery));
+                options.Add(Columns(Text("אישור אוטומטי של בקשות הארכה"), automatic));
+            }
+            else
+                options.Add(Columns(Text("אפשר להורה לבקש מיקום לזמן מוגבל במקרה של איחור מאומת"), emergency));
+            options.Add(Button("שמירת הגדרות", () => Run(async () =>
+            {
+                if (!parent && !emergency.IsToggled) DeviceBridge.SetEmergencyConsent(false);
+                await api.Send<object>(HttpMethod.Put, "settings/privacy", new PrivacySettings(
+                    grace.IsToggled, emergency.IsToggled, battery.IsToggled, automatic.IsToggled));
+                if (!parent) DeviceBridge.SetEmergencyConsent(emergency.IsToggled);
+                await Refresh(throwFailure: true);
+                Render();
+            }), false));
+            layout.Add(Box(options));
         }
         layout.Add(Button(demo is not null ? "יציאה מהדגמה" : "התנתקות", async () => await Run(async () =>
         {
@@ -148,8 +175,8 @@ internal sealed partial class HomePage
                 throw new InvalidOperationException("יש לחבר חשבון הורה לפני הפעלת שיתוף.");
             if (enabled)
             {
-                bool consent = await DisplayAlertAsync("שיתוף מיקום עם ההורה",
-                    "בזמן בקשת חזרה האפליקציה תבדוק כניסה לאזור הבית, גם כשהמסך כבוי אם המכשיר מאפשר. ניתן לבטל את השיתוף בכל עת.",
+                bool consent = await DisplayAlertAsync("בדיקת הגעה במכשיר",
+                    "בזמן בקשת חזרה האפליקציה תבדוק כניסה לאזור הבית, גם כשהמסך כבוי אם המכשיר מאפשר. רק סטטוס ההגעה נשלח בשגרה. אפשר לכבות את הבדיקה בכל עת.",
                     "מאשר/ת", "ביטול");
                 if (!consent) return;
                 if (!await DeviceBridge.RequestLocation())
@@ -202,17 +229,17 @@ internal sealed partial class HomePage
         await Navigation.PushAsync(FormPage("חיבור משפחתי", stack));
     }
 
-    private void ShowAlarm(ReturnView? row)
+    private void ShowAlarm(ReturnView? row, bool refreshOnly = false)
     {
         alarm = row;
-        alarmSilenced = false;
+        if (!refreshOnly) alarmSilenced = false;
         bool parent = family?.Me.Role != FamilyRole.Child;
         string title = testingAlarm ? "בדיקת אזעקה" : row?.Status == ReturnStatus.Overdue
-            ? parent ? "ילדך עדיין לא הגיע הביתה" : "שעת החזרה הביתה עברה"
+            ? parent ? "🚨 הילד שלך עדיין לא הגיע הביתה!" : "שעת החזרה הביתה עברה"
             : offlineAlert?.Title ?? "לא ניתן לאמת הגעה הביתה";
         string helper = row?.Status == ReturnStatus.LocationUnavailable
             ? "המיקום חסר, לא עדכני או לא מדויק מספיק. כדאי ליצור קשר."
-            : row is not null ? "המיקום האחרון בזמן החזרה זוהה מחוץ לאזור הבית."
+            : row is not null ? "המכשיר זוהה מחוץ לאזור הבית לאחר שעת החזרה."
             : offlineAlert?.Body ?? "פתחו את האפליקציה כדי לבדוק את מצב החזרה.";
         if (testingAlarm) helper = "הצליל והרטט פועלים במכשיר הזה בלבד.";
         root.Children.Clear();
@@ -261,23 +288,52 @@ internal sealed partial class HomePage
                     PhoneDialer.Default.Open(number);
                     return Task.CompletedTask;
                 }), false, Paper));
-            if (parent && row is not null)
-                content.Add(Button("מיקום אחרון ידוע", async () => await Run(async () =>
+            if (row is not null && demo is null) content.Add(ConnectionStatus(row));
+            if (!parent && row?.EmergencyLocationRequested == true)
+                content.Add(Text("ההורה ביקש מיקום חירום. השיתוף זמני ואפשר לכבות אותו בהגדרות.", 15, Red));
+            if (parent && row is { Status: ReturnStatus.Overdue, Acknowledged: false } && demo is null)
+                content.Add(Button("בקשה או צפייה במיקום חירום", () => Run(async () =>
                 {
                     await Refresh(rebuild: false, throwFailure: true);
-                    if (family?.Requests.FirstOrDefault(r => r.Id == row.Id)?.LastKnown is not {} latest)
-                        throw new InvalidOperationException("אין מיקום משותף זמין.");
-                    await Map.Default.OpenAsync(latest.Latitude, latest.Longitude, new MapLaunchOptions
+                    var current = family?.Requests.FirstOrDefault(r => r.Id == row.Id);
+                    if (current?.LastKnown is not {} latest)
                     {
-                        Name = $"מיקום אחרון · {Time(latest.ObservedAt)}", NavigationMode = NavigationMode.None
-                    });
+                        await api.Send<object>(HttpMethod.Post, $"returns/{row.Id}/emergency-location");
+                        await Notice("הבקשה פעילה. כשהמכשיר ישלח מיקום אפשר ללחוץ שוב לצפייה.");
+                        return;
+                    }
+                    var location = FormattableString.Invariant($"{latest.Latitude},{latest.Longitude}");
+                    var title = $"מיקום חירום · {Time(latest.ObservedAt)} · דיוק {latest.Accuracy:0} מטר";
+                    var map = new WebView { HeightRequest = 350 };
+                    string template = await ReadAsset("home-map.html");
+                    map.Navigating += (_, e) =>
+                    {
+                        if (Uri.TryCreate(e.Url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+                            e.Cancel = true;
+                    };
+                    map.Source = new HtmlWebViewSource
+                    {
+                        Html = template.Replace("/*POSITION*/", location + "," + latest.Accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                        BaseUrl = "https://homesafe.invalid/"
+                    };
+                    var page = FormPage(title, Stack(9, Text(title, 16, Ink, true), map));
+                    emergencyPage = page;
+                    emergencyRequest = row.Id;
+                    page.Disappearing += (_, _) =>
+                    {
+                        emergencyPage = null;
+                        emergencyRequest = null;
+                    };
+                    await Navigation.PushAsync(page);
                 }), false, Paper));
-            if (row is { PushAccepted: false } && demo is null)
-                content.Add(Text("טרם התקבל אישור מספק ההתראות עבור המכשיר הזה.", 13, Muted));
+            if (row is not null && demo is null)
+                content.Add(Text(row.DeviceConfirmedPush ? "המכשיר אישר שקיבל את ההתראה."
+                    : row.PushAccepted ? "ספק ההתראות קיבל את השליחה. עדיין אין אישור מהמכשיר."
+                    : "עדיין אין אישור מספק ההתראות.", 13, Muted));
         }
         root.Add(Scroll(content), 0, 1);
-        if (Navigation.NavigationStack.Count > 1) _ = Navigation.PopToRootAsync();
-        if (testingAlarm || row is not { Acknowledged: true }) DeviceBridge.StartSound();
+        if (!refreshOnly && Navigation.NavigationStack.Count > 1) _ = Navigation.PopToRootAsync();
+        if (!refreshOnly && (testingAlarm || row is not { Acknowledged: true })) DeviceBridge.StartSound();
     }
 
     protected override bool OnBackButtonPressed()

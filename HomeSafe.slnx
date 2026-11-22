@@ -8,4 +8,7 @@
   <Folder Name="/Shared/">
     <Project Path="Shared/HomeSafe.Shared.csproj" />
   </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/HomeSafe.Tests.csproj" />
+  </Folder>
 </Solution>

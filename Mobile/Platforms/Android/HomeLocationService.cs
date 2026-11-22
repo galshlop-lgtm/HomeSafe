@@ -17,6 +17,7 @@ public sealed class HomeLocationService : Service, ILocationListener
     private long until;
     private long lastUpload;
     private System.Threading.Timer? expiry;
+    private System.Threading.Timer? heartbeat;
 
     public override IBinder? OnBind(Intent? intent) => null;
 
@@ -36,7 +37,7 @@ public sealed class HomeLocationService : Service, ILocationListener
         using var open = PendingIntent.GetActivity(this, 1, new Intent(this, typeof(MainActivity)), PendingIntentFlags.Immutable);
         using var notification = new Notification.Builder(this, DeviceBridge.TrackingChannel)
             .SetSmallIcon(Resource.Drawable.homesafe_status)!
-            .SetContentTitle("HomeSafe · שיתוף מיקום פעיל")!
+            .SetContentTitle("HomeSafe · בדיקת הגעה פעילה")!
             .SetContentText("המיקום נבדק בזמן בקשת חזרה פעילה.")!
             .SetOngoing(true)!
             .SetContentIntent(open)!.Build();
@@ -49,6 +50,9 @@ public sealed class HomeLocationService : Service, ILocationListener
             if (manager.IsProviderEnabled(LocationManager.NetworkProvider))
                 manager.RequestLocationUpdates(LocationManager.NetworkProvider, 70_000, 0f, this, Looper.MainLooper);
             Running = true;
+            heartbeat?.Dispose();
+            heartbeat = new System.Threading.Timer(state => MainThread.BeginInvokeOnMainThread(
+                () => _ = DeviceBridge.Heartbeat(request)), null, 0, 30_000);
         }
         catch (Java.Lang.SecurityException) { StopSelf(); }
         catch (Java.Lang.IllegalArgumentException) { StopSelf(); }
@@ -62,11 +66,11 @@ public sealed class HomeLocationService : Service, ILocationListener
 #pragma warning disable CS0618, CA1422
         bool mocked = location.IsFromMockProvider;
 #pragma warning restore CS0618, CA1422
-        if (!location.HasAccuracy || location.Accuracy <= 0 || location.Accuracy > 50 || mocked) return;
+        if (mocked) return;
         if (now.ToUnixTimeMilliseconds() - lastUpload < 15_000) return;
         lastUpload = now.ToUnixTimeMilliseconds();
         _ = DeviceBridge.Report(request, new LocationFix(location.Latitude, location.Longitude,
-            location.Accuracy, DateTimeOffset.FromUnixTimeMilliseconds(location.Time)));
+            location.HasAccuracy ? location.Accuracy : -1, DateTimeOffset.FromUnixTimeMilliseconds(location.Time)));
     }
 
     public void OnProviderEnabled(string provider) { }
@@ -77,6 +81,7 @@ public sealed class HomeLocationService : Service, ILocationListener
     {
         Running = false;
         expiry?.Dispose();
+        heartbeat?.Dispose();
         manager?.RemoveUpdates(this);
         base.OnDestroy();
     }

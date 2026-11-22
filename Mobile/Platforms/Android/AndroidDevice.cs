@@ -22,7 +22,7 @@ internal static partial class DeviceBridge
 {
     internal const string TrackingChannel = "homesafe.location";
     private const string UrgentChannel = "homesafe.alarm.v1";
-    private const string NormalChannel = "homesafe.updates";
+    private const string NormalChannel = "homesafe.updates.quiet";
     private const string FallbackKey = "homesafe.scheduled";
     private const string SecretKey = "homesafe.intent";
     private static readonly object proofGate = new();
@@ -45,7 +45,7 @@ internal static partial class DeviceBridge
             Description = "התרעות דחופות למועדי חזרה",
             LockscreenVisibility = NotificationVisibility.Private
         }.WithAlarmSound());
-        Notifications.CreateNotificationChannel(new(NormalChannel, "בקשות ותזכורות", NotificationImportance.Default));
+        Notifications.CreateNotificationChannel(new(NormalChannel, "עדכונים שקטים", NotificationImportance.Low));
         Notifications.CreateNotificationChannel(new(TrackingChannel, "אימות מיקום", NotificationImportance.Low));
     }
 
@@ -283,9 +283,12 @@ public sealed class HomePushService : FirebaseMessagingService
             || !Enum.TryParse(Read("kind"), out AlertKind kind)
             || !long.TryParse(Read("expires"), CultureInfo.InvariantCulture, out long expires)
             || expires is < 0 or > 253402300799) return;
-        DeviceBridge.PublishAndroid(new(id, request, kind, Read("title") ?? "HomeSafe",
+        var alert = new AlertMessage(id, request, kind, Read("title") ?? "HomeSafe",
             Read("body") ?? "", Read("urgent") == "1",
-            DateTimeOffset.FromUnixTimeSeconds(expires)));
+            DateTimeOffset.FromUnixTimeSeconds(expires));
+        DeviceBridge.PublishAndroid(alert);
+        if (GetSystemService(Context.NotificationService) is NotificationManager notifications && notifications.AreNotificationsEnabled())
+            _ = DeviceBridge.ConfirmReceipt(alert);
     }
 }
 

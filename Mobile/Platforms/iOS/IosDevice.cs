@@ -172,8 +172,8 @@ internal static partial class DeviceBridge
             var message = Unavailable(item.Key);
             var content = new UNMutableNotificationContent
             {
-                Title = message.Title, Body = message.Body, Sound = UNNotificationSound.Default,
-                InterruptionLevel = UNNotificationInterruptionLevel.TimeSensitive2,
+                Title = message.Title, Body = message.Body,
+                InterruptionLevel = UNNotificationInterruptionLevel.Passive2,
                 UserInfo = NSDictionary.FromObjectsAndKeys(
                     [new NSString(item.Key.ToString()), new NSString("local")],
                     [new NSString("requestId"), new NSString("kind")])
@@ -215,9 +215,13 @@ internal static partial class DeviceBridge
         {
             var content = notification.Request.Content;
             bool urgent = Read(content.UserInfo, "urgent") == "1";
-            if (urgent && Parse(content) is {} alert) Opened(alert);
+            if (urgent && Parse(content) is {} alert)
+            {
+                _ = ConfirmReceipt(alert);
+                Opened(alert);
+            }
             completionHandler(urgent ? UNNotificationPresentationOptions.List
-                : UNNotificationPresentationOptions.Banner | UNNotificationPresentationOptions.Sound);
+                : UNNotificationPresentationOptions.Banner);
         }
 
         public override async void DidReceiveNotificationResponse(UNUserNotificationCenter center,
@@ -232,7 +236,11 @@ internal static partial class DeviceBridge
                     {
                         if (await LocalCheck(alert.RequestId) is {} local) Opened(local);
                     }
-                    else Opened(alert);
+                    else
+                    {
+                        _ = ConfirmReceipt(alert);
+                        Opened(alert);
+                    }
                 }
             }
             finally { completionHandler(); }
@@ -243,7 +251,8 @@ internal static partial class DeviceBridge
             if (!Guid.TryParse(Read(content.UserInfo, "requestId"), out var request)) return null;
             if (Read(content.UserInfo, "kind") == "local") return Unavailable(request);
             if (!Enum.TryParse(Read(content.UserInfo, "kind"), out AlertKind kind)) return null;
-            return new(Guid.NewGuid(), request, kind, content.Title, content.Body,
+            if (!Guid.TryParse(Read(content.UserInfo, "id"), out var id)) return null;
+            return new(id, request, kind, content.Title, content.Body,
                 Read(content.UserInfo, "urgent") == "1", DateTimeOffset.UtcNow.AddMinutes(12));
         }
     }

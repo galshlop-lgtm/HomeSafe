@@ -44,12 +44,14 @@ internal sealed partial class HomePage
                 if (row.Status == ReturnStatus.Pending)
                     view.Add(Button("אישור שעת החזרה", () => Accept(row)));
             }
+            if (row is { Status: ReturnStatus.Pending or ReturnStatus.Accepted } && demo is null)
+                view.Add(Box(ExtensionControls(row, false)));
             var tracking = demo is not null ? model.SharingEnabled : DeviceBridge.Tracking;
-            view.Add(Box(Stack(5, Pill(tracking ? "שיתוף מיקום פעיל" : "שיתוף מיקום אינו פעיל",
+            view.Add(Box(Stack(5, Pill(tracking ? "בדיקת הגעה פעילה" : "בדיקת הגעה אינה פעילה",
                 tracking ? Green : Amber, tracking ? SoftGreen : SoftAmber),
-                Text(model.SharingEnabled
-                    ? "המיקום משותף עם ההורה המקושר במהלך בקשת חזרה."
-                    : "אפשר להפעיל שיתוף מיקום בהגדרות לאחר חיבור להורה.", 14, Muted),
+                Text(row?.EmergencyLocationRequested == true
+                    ? "ההורה ביקש מיקום חירום. השיתוף מוגבל בזמן ואפשר לבטל אותו בהגדרות."
+                    : "המיקום שלך לא משותף עם ההורים כל עוד הכול תקין", 14, Muted),
                 Button("הגדרות מיקום", () => Go(() => { section = "settings"; Render(); }), false))));
         }
         return view;
@@ -76,7 +78,14 @@ internal sealed partial class HomePage
 
     private View ChildCard(Account child, ReturnView? row)
     {
-        var badge = row is null ? Pill("אין בקשה", Muted, Canvas) : StatusBadge(row.Status);
+        var badge = row switch
+        {
+            null => Pill("אין בקשה", Muted, Canvas),
+            { Status: ReturnStatus.Pending or ReturnStatus.Accepted }
+                when row.Deadline > DateTimeOffset.UtcNow && row.Deadline <= DateTimeOffset.UtcNow.AddMinutes(15)
+                => Pill("המועד מתקרב", Amber, SoftAmber),
+            _ => StatusBadge(row.Status)
+        };
         var initials = Text(new string(child.Name.Take(1).ToArray()), 18, Blue, true);
         initials.HorizontalTextAlignment = TextAlignment.Center;
         initials.VerticalTextAlignment = TextAlignment.Center;
@@ -88,10 +97,16 @@ internal sealed partial class HomePage
         badge.VerticalOptions = LayoutOptions.Center;
         if (row is null) return Box(header);
         var card = Stack(12, header);
+        if (demo is null) card.Add(ConnectionStatus(row));
+        if (row.GraceUntil is {} grace && grace > DateTimeOffset.UtcNow
+            && row.Status is ReturnStatus.Pending or ReturnStatus.Accepted)
+            card.Add(Text($"התרעה מושהית עד {Time(grace)} בעקבות התקרבות לבית.", 13, Amber));
+        if (family?.Me.Role == FamilyRole.Parent && row.Extensions?.Any(x => x.Decision == ExtensionDecision.Pending) == true)
+            card.Add(ExtensionControls(row, true));
         if (row.Status is ReturnStatus.Pending or ReturnStatus.Accepted)
             card.Add(Columns(Text(row.Home.Name, 13, Muted), TimerLabel(row, 15, Blue)));
         if (row.Status == ReturnStatus.Arrived && row.ArrivedAt is {} arrived)
-            card.Add(Text($"{(row.LateArrival ? "הגעה אחרי המועד" : "הגעה אומתה")} ב־{Time(arrived)}", 13, Green));
+            card.Add(Text($"{(row.LateArrival ? "הגעה אחרי המועד" : "✓ הילד הגיע הביתה בזמן")} ב־{Time(arrived)}", 13, Green));
         var link = Button(row.Status == ReturnStatus.Arrived ? "אישור הגעה" : "פרטי הבקשה",
             async () => await Navigation.PushAsync(row.Status == ReturnStatus.Arrived ? ArrivalPage(row) : DetailPage(row)), false);
         card.Add(link);
@@ -102,7 +117,7 @@ internal sealed partial class HomePage
     {
         ReturnStatus.Arrived => Pill("בבית", Green, SoftGreen),
         ReturnStatus.Overdue => Pill("איחור", Red, SoftRed),
-        ReturnStatus.LocationUnavailable => Pill("מיקום לא זמין", Amber, SoftAmber),
+        ReturnStatus.LocationUnavailable => Pill("מיקום לא זמין", Muted, Canvas),
         ReturnStatus.Accepted => Pill("ממתינים להגעה", Blue, SoftBlue),
         _ => Pill("ממתינים לאישור", Muted, Canvas)
     };
@@ -129,6 +144,7 @@ internal sealed partial class HomePage
         var stack = Stack(13, StatusBadge(row.Status), Text(row.ChildName, 23, Ink, true),
             Box(Stack(8, Text("מועד החזרה", 13, Muted), Text($"{Day(row.Deadline)} · {Time(row.Deadline)}", 24, Ink, true),
                 Text($"{row.Home.Name} · רדיוס {row.Home.Radius} מטר", 14, Muted))));
+        if (demo is null) stack.Add(ExtensionControls(row, parent));
         if (row.Status == ReturnStatus.Pending && !parent)
             stack.Add(Button("אישור שעת החזרה", async () => { await Accept(row); if (Navigation.NavigationStack.Count > 1) await Navigation.PopAsync(); }));
         if (parent && row.Status is ReturnStatus.Pending or ReturnStatus.Accepted)
@@ -140,6 +156,61 @@ internal sealed partial class HomePage
                 ShowAlarm(row);
             }, false));
         return FormPage("פרטי בקשה", stack);
+    }
+
+    private static View ConnectionStatus(ReturnView row)
+    {
+        var status = Stack(4);
+        status.Add(Text(row.DeviceUnavailable ? "המכשיר אינו זמין" :
+            row.LastCommunication is null ? "טרם התקבל עדכון מהמכשיר" : "התקבל עדכון מהמכשיר", 13, Muted));
+        if (row.LastCommunication is {} last)
+            status.Add(Text($"תקשורת אחרונה · {Day(last)} · {Time(last)}", 13, Muted));
+        if (row.Battery is int battery)
+            status.Add(Text(battery < 15 ? $"סוללה חלשה · {battery}%" : $"סוללה בעדכון האחרון · {battery}%",
+                13, battery < 15 ? Amber : Muted));
+        return status;
+    }
+
+    private View ExtensionControls(ReturnView row, bool parent)
+    {
+        var panel = Stack(6);
+        var history = row.Extensions ?? [];
+        foreach (var entry in history)
+        {
+            string decision = entry.Decision switch
+            {
+                ExtensionDecision.Approved => "אושרה",
+                ExtensionDecision.Rejected => "נדחתה",
+                ExtensionDecision.Expired => "פגה",
+                _ => "ממתינה לתשובה"
+            };
+            panel.Add(Text($"בקשה לעוד {entry.Minutes} דקות · {Time(entry.RequestedAt)} · {decision}", 14, Muted));
+            if (parent && entry.Decision == ExtensionDecision.Pending && row.Deadline > DateTimeOffset.UtcNow)
+            {
+                Button Choice(bool approve) => Button(approve ? "אישור הארכה" : "דחיית הארכה", () => Run(async () =>
+                {
+                    await api.Send<ExtensionEntry>(HttpMethod.Post, $"returns/{row.Id}/extensions/decide",
+                        new ExtensionResponse(entry.Id, approve));
+                    if (Navigation.NavigationStack.Count > 1) await Navigation.PopToRootAsync();
+                    await Refresh(throwFailure: true);
+                }), approve);
+                panel.Add(Columns(Choice(true), Choice(false)));
+            }
+        }
+        if (!parent && row.Status is ReturnStatus.Pending or ReturnStatus.Accepted
+            && row.Deadline > DateTimeOffset.UtcNow && !history.Any(x => x.Decision == ExtensionDecision.Pending))
+        {
+            Button Request(int minutes) => Button($"בקש עוד {minutes} דקות", () => Run(async () =>
+            {
+                await api.Send<ExtensionEntry>(HttpMethod.Post, $"returns/{row.Id}/extensions",
+                    new ExtensionRequest(minutes, row.Revision));
+                if (Navigation.NavigationStack.Count > 1) await Navigation.PopToRootAsync();
+                await Refresh(throwFailure: true);
+            }), false);
+            panel.Add(Request(15));
+            panel.Add(Request(30));
+        }
+        return panel;
     }
 
     private ContentPage ArrivalPage(ReturnView row)

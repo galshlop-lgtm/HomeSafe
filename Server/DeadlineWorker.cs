@@ -32,7 +32,7 @@ public sealed class DeadlineWorker(Store store, PushSender sender, TimeProvider 
     private async Task Dispatch(CancellationToken token)
     {
         var now = clock.GetUtcNow();
-        var pending = store.Read(s => s.Outbox.Where(d => !d.Accepted && d.NextTry <= now && d.Message.ExpiresAt > now)
+        var pending = store.Read(s => s.Outbox.Where(d => !d.Accepted && d.ReceivedAt is null && d.NextTry <= now && d.Message.ExpiresAt > now)
             .Select(d => (d.Message, d.Recipient))
             .OrderByDescending(x => x.Message.Urgent)
             .Take(100).ToArray());

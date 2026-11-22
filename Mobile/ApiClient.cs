@@ -1,4 +1,6 @@
 using System.Net;
+using System.Reflection;
+using System.Text.Json;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using HomeSafe.Shared;
@@ -8,41 +10,64 @@ namespace HomeSafe.Mobile;
 
 internal sealed class ApiClient
 {
-    private const string SessionKey = "homesafe.session";
+    private const string SessionKey = "homesafe.https.session";
+    private const string EndpointKey = "homesafe.https.endpoint";
+    private const string ConnectionError = "לא ניתן להתחבר לשרת. בדוק את הכתובת ונסה שוב.";
     internal static readonly ApiClient Current = new();
-    private readonly HttpClient client = new() { Timeout = TimeSpan.FromSeconds(7) };
+    private readonly HttpClient client = new(new HttpClientHandler { AllowAutoRedirect = false })
+        { Timeout = TimeSpan.FromSeconds(7) };
     private string? token;
 
-    public string Endpoint => Preferences.Default.Get("homesafe.server", "");
+    public string Endpoint { get; private set; } = "";
     public bool SignedIn => token is not null;
+    private string? verified;
 
-    public void SetEndpoint(string address)
+    private static bool Trusted(string endpoint)
     {
-        if (!Uri.TryCreate(address.Trim(), UriKind.Absolute, out var uri)
-            || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.UserInfo.Length != 0
-            || uri.Scheme != "https" && !DebugHttp(uri))
-            throw new InvalidOperationException("יש להזין כתובת שרת HTTPS תקינה.");
-        Preferences.Default.Set("homesafe.server", uri.AbsoluteUri.TrimEnd('/'));
+        var configured = typeof(ApiClient).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(x => x.Key == "HomeSafeTrustedServers")?.Value ?? "";
+        return ServerAddress.IsTrusted(endpoint, configured);
     }
 
-    private static bool DebugHttp(Uri uri)
+    public async Task ValidateEndpoint(string address)
     {
-#if DEBUG
-        return uri.Scheme == "http";
-#else
-        return false;
-#endif
+        verified = null;
+        string endpoint = ServerAddress.Normalize(address)
+            ?? throw new InvalidOperationException("יש להזין כתובת שרת HTTPS תקינה.");
+        if (!Trusted(endpoint))
+            throw new InvalidOperationException("כתובת השרת אינה מאושרת בגרסה זו של HomeSafe.");
+        try
+        {
+            using var response = await client.GetAsync(endpoint + "/health");
+            if (!response.IsSuccessStatusCode) throw new InvalidOperationException(ConnectionError);
+            var health = await response.Content.ReadFromJsonAsync<HealthStatus>();
+            if (health is not { Status: "ok", Service: "HomeSafe", Protocol: 2 })
+                throw new InvalidOperationException(ConnectionError);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or NotSupportedException)
+        {
+            throw new InvalidOperationException(ConnectionError, ex);
+        }
+
+        if (Endpoint != endpoint) Forget();
+        await SecureStorage.Default.SetAsync(EndpointKey, endpoint);
+        Endpoint = verified = endpoint;
     }
 
     public async Task Restore()
     {
-        if (!SignedIn && Endpoint.Length > 0)
-            token = await SecureStorage.Default.GetAsync(SessionKey);
+        if (SignedIn) return;
+        var saved = await SecureStorage.Default.GetAsync(EndpointKey);
+        if (saved is null || !Trusted(saved)) return;
+        Endpoint = saved;
+        var value = await SecureStorage.Default.GetAsync(SessionKey);
+        if (value is not null && JsonSerializer.Deserialize<SavedSession>(value) is {} session && session.Endpoint == saved)
+            token = session.Token;
     }
 
     public async Task SignIn(Session session)
     {
-        await SecureStorage.Default.SetAsync(SessionKey, session.Token);
+        await SecureStorage.Default.SetAsync(SessionKey, JsonSerializer.Serialize(new SavedSession(Endpoint, session.Token)));
         token = session.Token;
     }
 
@@ -52,12 +77,16 @@ internal sealed class ApiClient
         token = null;
     }
 
+    private sealed record SavedSession(string Endpoint, string Token);
+
     public Task<FamilyView> Family() => Get<FamilyView>("family");
 
     public Task<T> Get<T>(string route) => Send<T>(HttpMethod.Get, route);
 
     public async Task<T> Send<T>(HttpMethod method, string route, object? data = null)
     {
+        if (Endpoint.Length == 0 || (!SignedIn && verified != Endpoint))
+            throw new InvalidOperationException("יש לבדוק תחילה את החיבור לשרת HomeSafe.");
         using var request = new HttpRequestMessage(method, Endpoint + "/api/" + route);
         if (token is {} secret) request.Headers.Authorization = new("Bearer", secret);
         if (data is not null) request.Content = JsonContent.Create(data);
