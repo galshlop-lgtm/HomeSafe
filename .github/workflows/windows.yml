@@ -14,10 +14,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet workload install maui-windows
+      - shell: pwsh
+        run: |
+          '{"sdk":{"version":"10.0.100","rollForward":"latestFeature","allowPrerelease":false}}' | Set-Content global.json
+          dotnet workload install maui-windows
       - run: >-
           dotnet publish Mobile/HomeSafe.Mobile.csproj -c Release
-          -p:HomeSafeWindowsOnly=true -r win-x64 --self-contained
+          -f net10.0-windows10.0.19041.0 -p:HomeSafeWindowsOnly=true -r win-x64 --self-contained
           -o WindowsApp
       - shell: pwsh
         run: |
